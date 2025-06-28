@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>謎解きピン抜きゲーム</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;800&family=Poppins:wght@600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Poppins', 'M PLUS Rounded 1c', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            touch-action: manipulation;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .game-wrapper {
+            width: 100%;
+            max-width: 500px;
+            padding: 1rem;
+        }
+        .game-container {
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            border-radius: 2rem;
+            padding: 1.5rem;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+        canvas {
+            background-color: #fdf6e3;
+            border-radius: 1.5rem;
+            box-shadow: inset 0 0 15px rgba(0,0,0,0.15);
+        }
+        .control-button {
+            width: 72px;
+            height: 72px;
+            background: linear-gradient(145deg, #6c7ff8, #5a69cf);
+            color: white;
+            border-radius: 50%;
+            font-size: 2.5rem;
+            font-weight: 800;
+            line-height: 1;
+            box-shadow: 5px 5px 15px rgba(46, 51, 90, 0.3), -5px -5px 15px rgba(118, 137, 255, 0.6);
+            border: 2px solid rgba(255,255,255,0.5);
+            transition: all 0.1s ease-in-out;
+            user-select: none;
+        }
+        .control-button:active {
+             box-shadow: inset 5px 5px 15px rgba(46, 51, 90, 0.3), inset -5px -5px 15px rgba(118, 137, 255, 0.6);
+             transform: scale(0.95);
+             color: rgba(255,255,255,0.8);
+        }
+        .reset-button {
+            background: #e74c3c;
+            border-bottom: 4px solid #c0392b;
+        }
+        .reset-button:active {
+            transform: translateY(2px);
+            border-bottom-width: 2px;
+        }
+        .modal-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+            backdrop-filter: blur(5px);
+            z-index: 100;
+        }
+        .modal-overlay.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+        .modal-content {
+            color: white;
+            font-size: 3rem;
+            font-weight: 800;
+            text-shadow: 0 0 15px rgba(0,0,0,0.5);
+            transform: scale(0.7);
+            opacity: 0;
+            transition: transform 0.3s ease-out, opacity 0.3s ease-out;
+        }
+        .modal-overlay.visible .modal-content {
+            transform: scale(1);
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-wrapper">
+        <div class="game-container">
+            <header class="flex justify-between items-center mb-4 px-2">
+                <h1 id="level-display" class="text-3xl font-extrabold text-white text-shadow">ステージ: 1</h1>
+                <button id="reset-button" class="reset-button text-white font-bold py-2 px-5 rounded-xl transition-transform duration-100">リセット</button>
+            </header>
+
+            <div id="canvas-container" class="relative w-full aspect-square mb-6">
+                 <canvas id="game-canvas"></canvas>
+                 <div id="modal-overlay" class="modal-overlay rounded-2xl">
+                    <div id="modal-content" class="modal-content"></div>
+                 </div>
+            </div>
+
+            <footer id="controls" class="flex justify-center items-center space-x-10">
+                <button id="left-button" class="control-button">◀</button>
+                <button id="right-button" class="control-button">▶</button>
+            </footer>
+        </div>
+    </div>
+
+    <script>
+        // === 初期設定 ===
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('canvas-container');
+
+        const levelDisplay = document.getElementById('level-display');
+        const resetButton = document.getElementById('reset-button');
+        const leftButton = document.getElementById('left-button');
+        const rightButton = document.getElementById('right-button');
+        const modalOverlay = document.getElementById('modal-overlay');
+        const modalContent = document.getElementById('modal-content');
+        
+        // --- ゲーム要素の定義 ---
+        const EMPTY = 0, WALL = 1, LAVA = 2, WATER = 3, STONE = 4, PLAYER = 5, GOAL = 6;
+        const colors = {
+            [WALL]: '#8d6e63', [LAVA]: '#f44336', [WATER]: '#2196f3', [STONE]: '#757575',
+        };
+        const emojis = { [PLAYER]: '👧', [GOAL]: '🚩' };
+
+        let gridSize = 12, cellSize;
+        let grid = [], pins = [];
+        let player = { x: 0, y: 0, dy: 0 };
+        let goal = { x: 0, y: 0 };
+        
+        let currentLevel = 0;
+        let gameOver = false;
+        let gameWon = false;
+        let animationFrameId;
+
+        // === ステージデータ (v5) ===
+        const levels = [
+            {
+                grid: [[1,1,1,1,1,1,1,1,1,1,1,1],[1,0,0,0,0,5,0,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,0,0,0,0,6,0,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1]],
+                pins: [{ x: 1, y: 3, length: 10, orientation: 'horizontal' }]
+            },
+            {
+                grid: [[1,1,1,1,1,1,1,1,1,1,1,1],[1,2,2,1,0,5,0,1,0,0,0,1],[1,2,2,1,0,0,0,1,0,0,0,1],[1,0,0,1,0,0,0,1,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,1,1,1,1,6,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1]],
+                pins: [{ x: 1, y: 3, length: 2, orientation: 'horizontal' },{ x: 4, y: 3, length: 3, orientation: 'horizontal' }]
+            },
+            {
+                grid: [[1,1,1,1,1,1,1,1,1,1,1,1],[1,3,3,3,1,0,0,5,0,0,0,1],[1,3,3,3,1,0,0,0,0,0,0,1],[1,0,0,0,1,0,0,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,1,2,2,2,2,2,2,2,2,1,1],[1,1,2,2,2,2,2,2,2,2,1,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,6,1],[1,1,1,1,1,1,1,1,1,1,1,1]],
+                pins: [{ x: 1, y: 3, length: 3, orientation: 'horizontal' },{ x: 5, y: 3, length: 6, orientation: 'horizontal' }]
+            },
+            {
+                grid: [[1,1,1,1,1,1,1,1,1,1,1,1],[1,5,0,1,3,3,3,0,0,0,0,1],[1,0,0,1,3,3,3,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,1,1,1,0,0,0,0,1,1,1,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,0,0,0,0,2,2,0,0,0,0,1],[1,0,0,0,0,2,2,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,0,0,0,0,6,0,0,0,0,0,1],[1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1]],
+                pins: [{ x: 1, y: 3, length: 2, orientation: 'horizontal' },{ x: 4, y: 3, length: 7, orientation: 'horizontal' },{ x: 1, y: 8, length: 10, orientation: 'horizontal' }]
+            },
+            {
+                grid: [[1,1,1,1,1,1,1,1,1,1,1,1],[1,5,0,0,0,0,0,0,0,3,3,1],[1,0,0,0,0,0,0,0,0,3,3,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,2,2,2,2,2,2,2,2,2,2,1],[1,2,2,2,2,2,2,2,2,2,2,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,0,0,0,0,0,0,0,0,0,0,1],[1,1,1,1,1,1,1,1,1,1,6,1],[1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1]],
+                pins: [{ x: 1, y: 4, length: 8, orientation: 'horizontal' },{ x: 9, y: 4, length: 2, orientation: 'horizontal' },{ x: 1, y: 8, length: 10, orientation: 'horizontal' }]
+            }
+        ];
+
+        function init() {
+            const containerWidth = container.clientWidth;
+            canvas.width = containerWidth;
+            canvas.height = containerWidth;
+            cellSize = canvas.width / gridSize;
+            loadLevel(currentLevel);
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            gameLoop();
+        }
+
+        function loadLevel(levelIndex) {
+            modalOverlay.classList.remove('visible');
+            if (levelIndex >= levels.length) {
+                gameOver = true;
+                gameWon = true;
+                showModal('完全制覇！');
+                return;
+            }
+            gameOver = false;
+            gameWon = false;
+            levelDisplay.textContent = `ステージ: ${levelIndex + 1}`;
+            const level = levels[levelIndex];
+            grid = level.grid.map(row => [...row]);
+            pins = JSON.parse(JSON.stringify(level.pins));
+            for (let y = 0; y < grid.length; y++) {
+                for (let x = 0; x < grid[y].length; x++) {
+                    if (grid[y][x] === PLAYER) {
+                        player = { x, y, dy: 0, grounded: false };
+                        grid[y][x] = EMPTY;
+                    }
+                    if (grid[y][x] === GOAL) {
+                        goal = { x, y };
+                        grid[y][x] = EMPTY;
+                    }
+                }
+            }
+        }
+        
+        function gameLoop() {
+            if (!gameOver) update();
+            draw();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        function update() {
+            // Player Physics
+            const playerFeetY = Math.floor(player.y + 1);
+            const playerCellX = Math.round(player.x);
+            player.grounded = !isCellEmptyForPlayer(playerCellX, playerFeetY);
+
+            if (!player.grounded) {
+                player.dy += 0.08;
+                player.y += player.dy;
+            } else {
+                player.dy = 0;
+                player.y = Math.floor(player.y);
+            }
+
+            // Fluid Simulation
+            for (let y = gridSize - 2; y >= 0; y--) {
+                for (let x = 1; x < gridSize - 1; x++) {
+                    const fluidType = grid[y][x];
+                    if (fluidType !== WATER && fluidType !== LAVA) continue;
+                    if (isCellEmptyForFluid(x, y + 1)) {
+                        grid[y][x] = EMPTY; grid[y + 1][x] = fluidType; continue;
+                    }
+                    const dir = Math.random() < 0.5 ? 1 : -1;
+                    if (isCellEmptyForFluid(x + dir, y)) {
+                        grid[y][x] = EMPTY; grid[y][x + dir] = fluidType;
+                    } else if (isCellEmptyForFluid(x - dir, y)) {
+                        grid[y][x] = EMPTY; grid[y][x - dir] = fluidType;
+                    }
+                }
+            }
+            
+            // Fluid Interaction
+            for (let y = 0; y < gridSize; y++) {
+                for (let x = 0; x < gridSize; x++) {
+                    if (grid[y]?.[x] === WATER) {
+                        const neighbors = [[y+1,x],[y-1,x],[y,x+1],[y,x-1]];
+                        for (const [ny, nx] of neighbors) {
+                            if (grid[ny]?.[nx] === LAVA) grid[ny][nx] = EMPTY;
+                        }
+                    }
+                }
+            }
+
+            // Collision and Goal Check
+            const pCellX = Math.round(player.x);
+            const pCellY = Math.round(player.y);
+            if (grid[pCellY]?.[pCellX] === LAVA || grid[pCellY + 1]?.[pCellX] === LAVA) {
+                 endGame(false, '失敗...');
+            }
+            if (Math.abs(player.x - goal.x) < 0.8 && Math.abs(player.y - goal.y) < 0.8) {
+                endGame(true, 'クリア！');
+            }
+        }
+        
+        function isCellPassable(x, y) {
+             if (y >= gridSize || x < 0 || x >= gridSize || y < 0) return false;
+             const cell = grid[y]?.[x];
+             if (cell === WALL || cell === STONE) return false;
+             for (const pin of pins) {
+                if (!pin.isRemoving && pin.orientation === 'horizontal' && y === pin.y && x >= pin.x && x < pin.x + pin.length) return false;
+                if (!pin.isRemoving && pin.orientation === 'vertical' && x === pin.x && y >= pin.y && y < pin.y + pin.length) return false;
+            }
+            return true;
+        }
+
+        function isCellEmptyForPlayer(x, y) {
+            if (!isCellPassable(x, y)) return false;
+            const cell = grid[y]?.[x];
+            return cell !== LAVA && cell !== WATER;
+        }
+        
+        function isCellEmptyForFluid(x, y) {
+            if (!isCellPassable(x, y)) return false;
+            return grid[y]?.[x] === EMPTY;
+        }
+
+        function endGame(isWin, message) {
+            if (gameOver) return;
+            gameOver = true;
+            gameWon = isWin;
+            showModal(message);
+            if (isWin) {
+                setTimeout(() => { currentLevel++; loadLevel(currentLevel); }, 1500);
+            }
+        }
+
+        function showModal(text) {
+            modalContent.textContent = text;
+            modalOverlay.classList.add('visible');
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let y = 0; y < gridSize; y++) {
+                for (let x = 0; x < gridSize; x++) {
+                    if (grid[y][x] !== EMPTY) {
+                        ctx.fillStyle = colors[grid[y][x]];
+                        ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                    }
+                }
+            }
+            pins.forEach(pin => drawPin(pin));
+            drawGoal();
+            drawPlayer();
+        }
+
+        function drawPlayer() {
+            ctx.fillStyle = '#ec4899';
+            const x = (player.x + 0.5) * cellSize;
+            const y = (player.y + 0.5) * cellSize;
+            ctx.beginPath();
+            ctx.arc(x, y, cellSize * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(x - cellSize*0.15, y - cellSize*0.1, cellSize * 0.08, 0, Math.PI * 2);
+            ctx.arc(x + cellSize*0.15, y - cellSize*0.1, cellSize * 0.08, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function drawGoal() {
+            const x = (goal.x + 0.5) * cellSize;
+            const y = (goal.y + 0.5) * cellSize;
+            ctx.font = `${cellSize * 0.9}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(emojis[GOAL], x, y);
+        }
+
+        function drawPin(pin) {
+            if(pin.isRemoving) pin.removeProgress += 0.1;
+            if(pin.removeProgress > 1.2) {
+                pins = pins.filter(p => p !== pin);
+                return;
+            }
+
+            const handleSize = cellSize * 0.8;
+            const x = pin.x * cellSize;
+            const y = pin.y * cellSize;
+            let pinLength = pin.length * cellSize;
+            
+            ctx.save();
+            if(pin.isRemoving) {
+                ctx.translate(-(pinLength + handleSize * 2) * pin.removeProgress, 0);
+            }
+
+            // Pin Bar
+            const grad = ctx.createLinearGradient(x, y, x, y + cellSize);
+            grad.addColorStop(0, '#fef08a');
+            grad.addColorStop(1, '#facc15');
+            ctx.fillStyle = grad;
+            ctx.fillRect(x, y, pinLength, cellSize);
+            ctx.strokeStyle = '#a16207';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, pinLength, cellSize);
+
+            // Pin Handles
+            ctx.fillStyle = '#eab308';
+            ctx.beginPath();
+            ctx.arc(x, y + cellSize / 2, handleSize/2, 0, 2 * Math.PI);
+            ctx.fill(); ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(x + pinLength, y + cellSize / 2, handleSize/2, 0, 2 * Math.PI);
+            ctx.fill(); ctx.stroke();
+            ctx.restore();
+        }
+
+        function showMessage(text, color) {
+            messageEl.textContent = text;
+            messageEl.style.color = color;
+        }
+
+        function movePlayer(dx) {
+            if (gameOver || !player.grounded) return;
+            const newX = Math.round(player.x) + dx;
+            if (isCellEmptyForPlayer(newX, Math.floor(player.y))) {
+                player.x = newX;
+            }
+        }
+
+        // --- イベントリスナー ---
+        canvas.addEventListener('click', (e) => {
+            if (gameOver) return; 
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            let pinToRemove = null;
+            pins.forEach((pin) => {
+                const isHorizontal = pin.orientation === 'horizontal';
+                const pinRect = { x: pin.x * cellSize, y: pin.y * cellSize,
+                    width: isHorizontal ? pin.length * cellSize : cellSize,
+                    height: isHorizontal ? cellSize : pin.length * cellSize
+                };
+                if (mouseX > pinRect.x && mouseX < pinRect.x + pinRect.width &&
+                    mouseY > pinRect.y && mouseY < pinRect.y + pinRect.height) {
+                    pinToRemove = pin;
+                }
+            });
+            if (pinToRemove && !pinToRemove.isRemoving) {
+                pinToRemove.isRemoving = true;
+                pinToRemove.removeProgress = 0;
+            }
+        });
+
+        resetButton.addEventListener('click', () => loadLevel(currentLevel));
+        leftButton.addEventListener('click', () => movePlayer(-1));
+        rightButton.addEventListener('click', () => movePlayer(1));
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') movePlayer(-1);
+            if (e.key === 'ArrowRight') movePlayer(1);
+        });
+        
+        window.addEventListener('resize', init);
+        window.addEventListener('load', init);
+    </script>
+
+</body>
+</html>
